@@ -1,226 +1,312 @@
-import base64
+# main.py
+#
+# Python webhook logic for Dialogflow CX to handle document analysis.
+# Uses: Google Cloud Vision, Gemini API, Cloud Storage, and Firestore
+# to process a medical document and provide a structured summary.
+
 import json
 import os
 import requests
 from flask import Flask, request, jsonify
-from google.cloud import firestore, storage, vision
+from google.cloud import vision_v1, storage, firestore
 
-# Initialize Flask app
+# -----------------------------------------------------------------------------
+# Flask App Initialization
+# -----------------------------------------------------------------------------
 app = Flask(__name__)
 
-# --- Configuration ---
-# Environment variables for your bucket and project ID
-GOOGLE_CLOUD_PROJECT = os.environ.get('GOOGLE_CLOUD_PROJECT')
-GCS_BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME')
+# -----------------------------------------------------------------------------
+# Google Cloud Clients
+# Make sure GOOGLE_APPLICATION_CREDENTIALS is set in your environment.
+# -----------------------------------------------------------------------------
+try:
+    vision_client = vision_v1.ImageAnnotatorClient()
+    storage_client = storage.Client()
+    firestore_client = firestore.Client()
+except Exception as e:
+    print(f"Error initializing Google Cloud clients: {e}")
+    # In production, handle this more gracefully.
 
-if not all([GOOGLE_CLOUD_PROJECT, GCS_BUCKET_NAME]):
-    print("Warning: GOOGLE_CLOUD_PROJECT or GCS_BUCKET_NAME environment variables are not set.")
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/"
+    "models/gemini-2.5-flash-preview-05-20:generateContent"
+)
+GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "your-gcs-bucket-name")
 
-# Initialize Firestore, Storage, and Vision clients
-db = firestore.Client(project=GOOGLE_CLOUD_PROJECT)
-storage_client = storage.Client(project=GOOGLE_CLOUD_PROJECT)
-vision_client = vision.ImageAnnotatorClient()
-
-# --- Gemini API Configuration ---
-# This URL is for gemini-2.5-flash-preview-05-20.
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent"
-# Get the API key from the environment variable
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
-
-@app.route('/', methods=['POST'])
-def webhook():
+# -----------------------------------------------------------------------------
+# Utility Functions
+# -----------------------------------------------------------------------------
+def parse_dialogflow_session_id(session_path: str) -> str:
     """
-    Receives and processes the webhook request from Dialogflow CX.
+    Parse Dialogflow session path to extract the session ID.
+    Example: projects/PROJECT_ID/locations/LOCATION/agents/AGENT_ID/sessions/SESSION_ID
     """
-    try:
-        # Get the request body from Dialogflow
-        request_body = request.get_json(silent=True)
-        print("Received webhook request:\n", json.dumps(request_body, indent=2))
+    parts = session_path.split("/")
+    return parts[8] if len(parts) >= 9 else None
 
-        # Check for necessary parameters from Dialogflow's file upload event
-        session_info = request_body.get('sessionInfo', {})
-        parameters = session_info.get('parameters', {})
-        document_url = parameters.get('document_url')
-        document_name = parameters.get('document_name')
 
-        if not document_url or not document_name:
-            return jsonify({
-                "fulfillmentResponse": {
-                    "messages": [
-                        {"text": {"text": ["I was not able to find the document. Please try uploading it again."]}}
-                    ]
-                }
-            })
+def analyze_document_with_gemini(extracted_text: str):
+    """
+    Send the extracted text to Gemini API for structured analysis.
+    Returns: (structured_data: dict | None, summary_text: str)
+    """
+    if not GEMINI_API_KEY:
+        print("Gemini API key not found.")
+        return None, "Analysis unavailable. Please try again later."
 
-        print(f"Processing document: {document_name} from URL: {document_url}")
+    # Prompt for structured data extraction
+    prompt_for_structured_data = f"""
+    Analyze the following medical lab report text. Extract the following information into a single JSON object.
+    If any data is not present, use "N/A".
+    - patientName (string)
+    - testName (string)
+    - testDate (string)
+    - results (array of objects, each with 'resultName' and 'value')
+    - interpretation (summary of the results and what they mean)
 
-        # 1. Download the document from the temporary URL
-        try:
-            document_bytes = download_document(document_url)
-            if not document_bytes:
-                raise requests.exceptions.RequestException("Empty document content received.")
-        except requests.exceptions.RequestException as e:
-            print(f"Error downloading document: {e}")
-            return jsonify({
-                "fulfillmentResponse": {
-                    "messages": [
-                        {"text": {"text": ["I am sorry, I couldn't download the document. Please try uploading it again."]}}
-                    ]
-                }
-            })
+    Extracted text:
+    ```
+    {extracted_text}
+    ```
+    """
 
-        # 2. Analyze the document with the Gemini API (via Vision API)
-        gemini_response = analyze_document_with_gemini(document_bytes)
-        if not gemini_response:
-            return jsonify({
-                "fulfillmentResponse": {
-                    "messages": [
-                        {"text": {"text": ["Sorry, I couldn't analyze the document. Please try again later."]}}
-                    ]
-                }
-            })
-
-        # 3. Store the original document in Google Cloud Storage
-        original_document_url = save_document_to_storage(document_bytes, document_name)
-
-        # 4. Store the analyzed data and document URL in Firestore
-        session_id = request_body['session'].split('/')[-1]
-        save_data_to_firestore(session_id, gemini_response, original_document_url)
-
-        # 5. Send a success message back to Dialogflow
-        return jsonify({
-            "fulfillmentResponse": {
-                "messages": [
-                    {
-                        "text": {
-                            "text": [f"Thank you! I have successfully processed your medical document named '{document_name}'. The doctor can now review your test results prior to your appointment."]
+    payload = {
+        "contents": [{"parts": [{"text": prompt_for_structured_data}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "patientName": {"type": "STRING"},
+                    "testName": {"type": "STRING"},
+                    "testDate": {"type": "STRING"},
+                    "results": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "resultName": {"type": "STRING"},
+                                "value": {"type": "STRING"}
+                            }
                         }
-                    }
-                ]
-            }
-        })
-
-    except Exception as e:
-        print(f"An unexpected error occurred during webhook processing: {e}")
-        return jsonify({
-            "fulfillmentResponse": {
-                "messages": [
-                    {"text": {"text": [f"An unexpected error occurred. Please try again later."]}}
-                ]
-            }
-        })
-
-def download_document(url):
-    """Downloads a document from a given URL."""
-    response = requests.get(url)
-    response.raise_for_status() # Raise an exception for bad status codes
-    return response.content
-
-def analyze_document_with_gemini(document_bytes):
-    """
-    Analyzes the document by first extracting text with the Vision API
-    and then sending the text to the Gemini API for structured analysis.
-    """
-    try:
-        # Step A: Extract text from the document using Google Cloud Vision API
-        image = vision.Image(content=document_bytes)
-        
-        # This performs document text detection on the image file
-        response = vision_client.document_text_detection(image=image)
-        full_text = response.full_text_annotation.text
-        
-        if not full_text:
-            print("Vision API did not extract any text from the document.")
-            return None
-
-        print("Extracted text from document:\n", full_text)
-
-        # Step B: Send the extracted text to the Gemini API for analysis
-        prompt = (
-            "Analyze the following text from a medical document and extract the "
-            "following information as a JSON object: 'patientName', 'dateOfBirth', "
-            "'testName', 'results', 'doctorNotes', 'labName'. If a field is not found, "
-            "use 'N/A'. The results should be a string or array of strings. "
-            "Here is the text:\n\n"
-            f"```\n{full_text}\n```"
-        )
-        
-        payload = {
-            "contents": [
-                {
-                    "parts": [{"text": prompt}]
+                    },
+                    "interpretation": {"type": "STRING"}
                 }
-            ],
-            "generationConfig": {
-                "responseMimeType": "application/json"
             }
         }
-        
-        headers = {'Content-Type': 'application/json'}
-        gemini_response = requests.post(f"{GEMINI_API_URL}?key={GEMINI_API_KEY}", json=payload, headers=headers)
-        gemini_response.raise_for_status()
-        
-        result = gemini_response.json()
-        print("Gemini API response:\n", json.dumps(result, indent=2))
-        
-        # Extract and parse the JSON response from Gemini
-        gemini_text = result['candidates'][0]['content']['parts'][0]['text']
-        return json.loads(gemini_text)
+    }
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error calling Gemini API: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON from Gemini response: {e}")
-        return None
+    try:
+        response = requests.post(
+            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(payload),
+            timeout=30
+        )
+        response.raise_for_status()
+        gemini_response = response.json()
+        structured_data_str = (
+            gemini_response.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "{}")
+        )
+        structured_data = json.loads(structured_data_str)
+
+        # Generate a friendly patient summary
+        summary_prompt = f"""
+        Given the following medical test results in JSON format, generate a concise,
+        easy-to-read summary for the patient. Explain what the results mean,
+        suggest next steps (like "discuss with your doctor"), and recommend follow-up actions.
+
+        JSON data:
+        ```
+        {json.dumps(structured_data, indent=2)}
+        ```
+        """
+        summary_payload = {
+            "contents": [{"parts": [{"text": summary_prompt}]}],
+            "generationConfig": {"responseMimeType": "text/plain"}
+        }
+
+        summary_response = requests.post(
+            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(summary_payload),
+            timeout=30
+        )
+        summary_response.raise_for_status()
+        summary = (
+            summary_response.json()
+            .get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "Could not generate a summary.")
+        )
+        return structured_data, summary
+
     except Exception as e:
-        print(f"An error occurred during Vision/Gemini analysis: {e}")
-        return None
+        print(f"Error calling Gemini API: {e}")
+        return None, "There was a problem analyzing your document."
 
-def save_document_to_storage(document_bytes, document_name):
+
+def save_to_firestore(app_id: str, user_id: str, doc_data: dict) -> bool:
     """
-    Saves the original document to Google Cloud Storage.
-    Returns the public URL of the saved document.
+    Save the structured document data to Firestore.
+    """
+    try:
+        doc_ref = (
+            firestore_client.collection(
+                f"artifacts/{app_id}/users/{user_id}/medical_reports"
+            ).document()
+        )
+        doc_ref.set(doc_data)
+        print(f"Data saved to Firestore: {doc_ref.path}")
+        return True
+    except Exception as e:
+        print(f"Error saving to Firestore: {e}")
+        return False
+
+
+def save_to_cloud_storage(app_id: str, user_id: str,
+                          doc_name: str, doc_content: bytes) -> str | None:
+    """
+    Save the original document to a Google Cloud Storage bucket.
+    Returns the gs:// URL if successful.
     """
     try:
         bucket = storage_client.bucket(GCS_BUCKET_NAME)
-        
-        # Create a blob name with a unique identifier to prevent overwrites
-        blob_path = f"dialogflow_uploads/{document_name}"
-
-        # Upload the document
+        blob_path = f"artifacts/{app_id}/users/{user_id}/medical_reports/{doc_name}"
         blob = bucket.blob(blob_path)
-        blob.upload_from_string(document_bytes)
-
-        # Make the blob publicly readable
-        blob.make_public()
-
-        print(f"Document uploaded to {blob.public_url}")
-        return blob.public_url
-
+        blob.upload_from_string(doc_content)
+        gcs_url = f"gs://{GCS_BUCKET_NAME}/{blob_path}"
+        print(f"Document saved to Cloud Storage: {gcs_url}")
+        return gcs_url
     except Exception as e:
-        print(f"Error saving document to storage: {e}")
+        print(f"Error saving to Cloud Storage: {e}")
         return None
 
-def save_data_to_firestore(session_id, data, document_url):
+# -----------------------------------------------------------------------------
+# Webhook Route
+# -----------------------------------------------------------------------------
+@app.route("/webhook", methods=["POST"])
+def webhook():
     """
-    Saves the analyzed data and document URL to a Firestore document.
+    Main webhook handler for Dialogflow CX requests.
     """
+    req_body = request.get_json(silent=True)
+    if not req_body:
+        return jsonify({
+            "fulfillmentResponse": {
+                "messages": [{"text": {"text": ["Invalid request body."]}}]
+            }
+        })
+
+    session_path = req_body.get("session", "")
+    session_id = parse_dialogflow_session_id(session_path)
+    if not session_id:
+        return jsonify({
+            "fulfillmentResponse": {
+                "messages": [{"text": {"text": ["Could not identify session."]}}]
+            }
+        })
+
+    # Use session ID as user identifier (simple approach)
+    app_id = "default-app-id"
+    user_id = session_id
+
+    # Extract the document_url parameter
+    document_url = None
+    for param in req_body.get("pageInfo", {}).get("formInfo", {}).get("parameterInfo", []):
+        if param.get("displayName") == "document_url" and "value" in param:
+            document_url = param["value"]
+            break
+
+    # Fallback to session parameters
+    if not document_url:
+        document_url = req_body.get("sessionInfo", {}).get("parameters", {}).get("document_url")
+
+    if not document_url:
+        return jsonify({
+            "fulfillmentResponse": {
+                "messages": [{"text": {"text": ["No document URL provided."]}}]
+            }
+        })
+
     try:
-        # Create a new document in a 'medical_history' collection,
-        # using the session ID to link to the conversation.
-        doc_ref = db.collection('medical_history').document(session_id)
-        
-        # Add a timestamp and the document URL to the data
-        data['uploadTimestamp'] = firestore.SERVER_TIMESTAMP
-        data['originalDocumentURL'] = document_url
-        
-        doc_ref.set(data)
-        print(f"Data saved to Firestore under document ID: {doc_ref.id}")
+        # Download the document
+        doc_response = requests.get(document_url, stream=True, timeout=30)
+        doc_response.raise_for_status()
+        doc_content = doc_response.content
+        doc_name = document_url.split("/")[-1]
 
+        # Extract text using Google Cloud Vision
+        image = vision_v1.Image(content=doc_content)
+        response = vision_client.text_detection(image=image)
+        full_text = (
+            response.text_annotations[0].description
+            if response.text_annotations else ""
+        )
+
+        if not full_text:
+            return jsonify({
+                "fulfillmentResponse": {
+                    "messages": [{"text": {"text": [
+                        "Could not extract text from the document. "
+                        "Please ensure it is a clear image or PDF."
+                    ]}}]
+                }
+            })
+
+        # Analyze extracted text with Gemini API
+        structured_data, summary_text = analyze_document_with_gemini(full_text)
+        if not structured_data:
+            return jsonify({
+                "fulfillmentResponse": {
+                    "messages": [{"text": {"text": [summary_text]}}]
+                }
+            })
+
+        # Save to Cloud Storage and Firestore
+        gcs_url = save_to_cloud_storage(app_id, user_id, doc_name, doc_content)
+        structured_data["gcs_url"] = gcs_url
+        save_to_firestore(app_id, user_id, structured_data)
+
+        # Respond to Dialogflow
+        return jsonify({
+            "fulfillmentResponse": {
+                "messages": [{
+                    "text": {
+                        "text": [
+                            "Thank you! I have analyzed your document.",
+                            f"Here is a summary of the results:\n\n{summary_text}"
+                        ]
+                    }
+                }]
+            }
+        })
+
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Error: {e}")
+        error_message = "I couldn't download the document. The link may have expired."
     except Exception as e:
-        print(f"Error saving data to Firestore: {e}")
-        return None
+        print(f"Unexpected error: {e}")
+        error_message = "I encountered an error while processing your request. Please try again."
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    return jsonify({
+        "fulfillmentResponse": {
+            "messages": [{"text": {"text": [error_message]}}]
+        }
+    })
+
+
+# -----------------------------------------------------------------------------
+# Local Development Entry Point
+# -----------------------------------------------------------------------------
+if __name__ == "__main__":
+    # For local testing
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
