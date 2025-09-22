@@ -14,15 +14,10 @@ from google.protobuf import json_format
 # Initialize Flask app
 app = Flask(__name__)
 
-# Initialize Google Cloud clients from environment variables
-# Ensure your environment is configured with GOOGLE_APPLICATION_CREDENTIALS
-try:
-    vision_client = vision_v1.ImageAnnotatorClient()
-    storage_client = storage.Client()
-    firestore_client = firestore.Client()
-except Exception as e:
-    print(f"Error initializing Google Cloud clients: {e}")
-    # You might want to handle this error more gracefully in a production environment
+# Global clients - will be initialized in the webhook function
+vision_client = None
+storage_client = None
+firestore_client = None
 
 # --- API Keys and Configuration ---
 # IMPORTANT: Use environment variables or a secrets manager for production.
@@ -31,6 +26,24 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent"
 
 # --- Utility Functions ---
+
+def initialize_clients():
+    """
+    Initializes Google Cloud clients from environment variables.
+    """
+    global vision_client, storage_client, firestore_client
+    try:
+        if not vision_client:
+            vision_client = vision_v1.ImageAnnotatorClient()
+        if not storage_client:
+            storage_client = storage.Client()
+        if not firestore_client:
+            firestore_client = firestore.Client()
+        print("Google Cloud clients initialized successfully.")
+        return True
+    except Exception as e:
+        print(f"Error initializing Google Cloud clients: {e}")
+        return False
 
 def parse_dialogflow_session_id(session_path):
     """
@@ -168,6 +181,15 @@ def webhook():
     """
     Main webhook handler for Dialogflow CX requests.
     """
+    if not initialize_clients():
+        error_message = "I'm sorry, my internal systems are not configured correctly. Please contact the administrator."
+        print(f"Failed to initialize Google Cloud clients. Returning error to Dialogflow.")
+        return jsonify({
+            "fulfillmentResponse": {
+                "messages": [{"text": {"text": [error_message]}}]
+            }
+        })
+    
     req_body = request.get_json(silent=True)
     # This line will print the full JSON request to your logs.
     print(f"Received request body: {json.dumps(req_body, indent=2)}")
