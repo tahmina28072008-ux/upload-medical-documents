@@ -169,7 +169,7 @@ def webhook():
     Main webhook handler for Dialogflow CX requests.
     """
     req_body = request.get_json(silent=True)
-    # Add this line to log the incoming request body
+    # This line will print the full JSON request to your logs.
     print(f"Received request body: {json.dumps(req_body, indent=2)}")
     if not req_body:
         return jsonify({"fulfillmentResponse": {"messages": [{"text": {"text": ["Invalid request body."]}}]}})
