@@ -1,5 +1,6 @@
-Flask
-requests
-google-cloud-firestore
-google-cloud-storage
+flask
 google-cloud-vision
+google-cloud-storage
+google-cloud-firestore
+requests
+
