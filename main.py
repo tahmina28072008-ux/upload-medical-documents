@@ -215,7 +215,7 @@ def webhook():
         structured_data, summary_text = analyze_document_with_gemini(full_text)
         
         if not structured_data:
-            return jsonify({"fulfillmentResponse": {"messages": [{"text": {"text": [summary_text]}}]})
+            return jsonify({"fulfillmentResponse": {"messages": [{"text": {"text": [summary_text]}}]}})
 
         # 5. Save original document to Cloud Storage
         gcs_url = save_to_cloud_storage(app_id, user_id, doc_name, doc_content)
