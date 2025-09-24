@@ -2,11 +2,17 @@ import os
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 import requests
+from flask_cors import CORS  # <-- Added
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx', 'png', 'jpg', 'jpeg'}
 
 app = Flask(__name__)
+# Allow only your frontend(s) for security; add more origins as needed
+CORS(app, origins=[
+    "http://healthcare-patient-portal.web.app",
+    "https://healthcare-patient-portal.web.app"
+])
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 if not os.path.exists(UPLOAD_FOLDER):
