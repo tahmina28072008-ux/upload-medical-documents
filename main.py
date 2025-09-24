@@ -47,6 +47,7 @@ def uploaded_file(filename):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     body = request.json
+    print("Received webhook body:", body, file=sys.stderr)
     file_url = body['sessionInfo']['parameters'].get('file_url')
     summary = "No file URL provided."
     if file_url:
@@ -54,6 +55,7 @@ def webhook():
             response = requests.get(file_url)
             report_content = response.content.decode('utf-8', errors='ignore')
             summary = analyze_medical_report(report_content)
+            print("Replying with summary:", summary, file=sys.stderr)
         except Exception as e:
             summary = f"Error processing the report: {str(e)}"
     return jsonify({
