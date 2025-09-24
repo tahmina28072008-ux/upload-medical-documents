@@ -1,11 +1,14 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from google.cloud import storage
 import os
-from flask_cors import CORS
 
 app = Flask(__name__)
+
+# Allow requests from your frontend domain
 CORS(app, origins=["https://healthcare-patient-portal.web.app"])
+
 BUCKET_NAME = "upload-documents-report"
 ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx', 'png', 'jpg', 'jpeg'}
 
@@ -17,9 +20,9 @@ def upload_to_gcs(file_obj, filename):
     bucket = client.bucket(BUCKET_NAME)
     blob = bucket.blob(filename)
     blob.upload_from_file(file_obj, content_type=file_obj.content_type)
-    # Make the file public (optional)
-    blob.make_public()
-    return blob.public_url
+    # Do NOT call blob.make_public(); use bucket-level IAM for access.
+    # Return the object's URL (works if bucket is public, otherwise use signed URL)
+    return f"https://storage.googleapis.com/{BUCKET_NAME}/{filename}"
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -39,6 +42,7 @@ def upload_file():
 # Dialogflow CX webhook fulfillment endpoint
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    import requests  # Local import for Cloud Run compatibility
     body = request.json
     file_url = body['sessionInfo']['parameters'].get('file_url')
     summary = "No file URL provided."
@@ -61,7 +65,7 @@ def webhook():
     })
 
 def analyze_medical_report(content):
-    # Replace this with your own AI/ML or logic
+    # Placeholder: Replace with your own analysis logic
     return content[:500] + ("..." if len(content) > 500 else "")
 
 if __name__ == '__main__':
