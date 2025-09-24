@@ -1,28 +1,24 @@
-import os
-import sys
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
-import requests
-from flask_cors import CORS  # <-- Added
-
-UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx', 'png', 'jpg', 'jpeg'}
+from google.cloud import storage
+import os
 
 app = Flask(__name__)
-# Allow only your frontend(s) for security; add more origins as needed
-CORS(app, origins=[
-    "http://healthcare-patient-portal.web.app",
-    "https://healthcare-patient-portal.web.app"
-])
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+BUCKET_NAME = "upload-documents-report"
+ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx', 'png', 'jpg', 'jpeg'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# File upload endpoint
+def upload_to_gcs(file_obj, filename):
+    client = storage.Client()
+    bucket = client.bucket(BUCKET_NAME)
+    blob = bucket.blob(filename)
+    blob.upload_from_file(file_obj, content_type=file_obj.content_type)
+    # Make the file public (optional)
+    blob.make_public()
+    return blob.public_url
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -32,31 +28,26 @@ def upload_file():
         return jsonify({'error': 'No selected file'}), 400
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
-        unique_filename = f"{str(int(round(os.times()[4]*1000)))}_{filename}"
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-        file.save(file_path)
-        file_url = request.host_url + 'uploads/' + unique_filename
-        return jsonify({'fileUrl': file_url})
+        # Use a unique name, e.g. timestamp + filename
+        unique_filename = f"{int(round(os.times()[4]*1000))}_{filename}"
+        public_url = upload_to_gcs(file, unique_filename)
+        return jsonify({'fileUrl': public_url})
     return jsonify({'error': 'Invalid file type'}), 400
-
-# Serve uploaded files
-@app.route('/uploads/<filename>', methods=['GET'])
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # Dialogflow CX webhook fulfillment endpoint
 @app.route('/webhook', methods=['POST'])
 def webhook():
     body = request.json
-    print("Received webhook body:", body, file=sys.stderr)
     file_url = body['sessionInfo']['parameters'].get('file_url')
     summary = "No file URL provided."
     if file_url:
         try:
             response = requests.get(file_url)
-            report_content = response.content.decode('utf-8', errors='ignore')
-            summary = analyze_medical_report(report_content)
-            print("Replying with summary:", summary, file=sys.stderr)
+            if response.status_code == 200:
+                report_content = response.content.decode('utf-8', errors='ignore')
+                summary = analyze_medical_report(report_content)
+            else:
+                summary = f"Could not retrieve the report file (HTTP {response.status_code}). Please try uploading again."
         except Exception as e:
             summary = f"Error processing the report: {str(e)}"
     return jsonify({
