@@ -2,4 +2,5 @@ Flask
 flask-cors
 requests
 Werkzeug
+google-cloud-storage
 
