@@ -2,8 +2,10 @@ from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from google.cloud import storage
 import os
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, origins=["https://healthcare-patient-portal.web.app"])
 BUCKET_NAME = "upload-documents-report"
 ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx', 'png', 'jpg', 'jpeg'}
 
