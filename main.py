@@ -1,10 +1,12 @@
 import os
+import io
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from google.cloud import storage
 import google.generativeai as genai
 import requests
+import pdfplumber
 
 app = Flask(__name__)
 
@@ -32,11 +34,23 @@ def upload_to_gcs(file_obj, filename):
     # Do NOT call blob.make_public(); use bucket-level IAM for access.
     return f"https://storage.googleapis.com/{BUCKET_NAME}/{filename}"
 
+def extract_text_from_pdf_bytes(pdf_bytes):
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+
 def ai_summarize(report_content):
     # Patient summary prompt
-    prompt_patient = f"Summarize the following medical report for a patient in simple, natural language. Focus on what the patient needs to know, avoid medical jargon, and explain clearly:\n\n{report_content}"
+    prompt_patient = (
+        "Summarize the following medical report for a patient in simple, natural language. "
+        "Focus on what the patient needs to know, avoid medical jargon, and explain clearly:\n\n"
+        f"{report_content}"
+    )
     # Doctor summary prompt
-    prompt_doctor = f"Summarize the following medical report for a doctor, highlighting key findings, clinical concerns, and what to focus on before the patient's visit:\n\n{report_content}"
+    prompt_doctor = (
+        "Summarize the following medical report for a doctor, highlighting key findings, clinical concerns, "
+        "and what to focus on before the patient's visit:\n\n"
+        f"{report_content}"
+    )
 
     model = genai.GenerativeModel('gemini-pro')
 
@@ -72,10 +86,19 @@ def webhook():
         try:
             response = requests.get(file_url)
             if response.status_code == 200:
-                report_content = response.content.decode('utf-8', errors='ignore')
-                patient_summary, doctor_summary = ai_summarize(report_content)
+                # Detect file type from URL extension
+                if file_url.lower().endswith('.pdf'):
+                    report_content = extract_text_from_pdf_bytes(response.content)
+                else:
+                    report_content = response.content.decode('utf-8', errors='ignore')
+                if not report_content.strip():
+                    patient_summary = doctor_summary = "The report file appears empty or could not be read."
+                else:
+                    patient_summary, doctor_summary = ai_summarize(report_content)
             else:
-                patient_summary = doctor_summary = f"Could not retrieve the report file (HTTP {response.status_code}). Please try uploading again."
+                patient_summary = doctor_summary = (
+                    f"Could not retrieve the report file (HTTP {response.status_code}). Please try uploading again."
+                )
         except Exception as e:
             patient_summary = doctor_summary = f"Error processing the report: {str(e)}"
     return jsonify({
