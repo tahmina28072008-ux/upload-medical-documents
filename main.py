@@ -23,8 +23,10 @@ if GENAI_API_KEY:
 else:
     raise Exception("GEMINI_API_KEY environment variable not set.")
 
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 def upload_to_gcs(file_obj, filename):
     client = storage.Client()
@@ -34,9 +36,21 @@ def upload_to_gcs(file_obj, filename):
     # Do NOT call blob.make_public(); use bucket-level IAM for access.
     return f"https://storage.googleapis.com/{BUCKET_NAME}/{filename}"
 
+
 def extract_text_from_pdf_bytes(pdf_bytes):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+
+
+def summarize_with_gemini(prompt: str, model_name="gemini-1.5-flash"):
+    """Helper to summarize text with Gemini."""
+    try:
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content([prompt])
+        return response.candidates[0].content.parts[0].text.strip()
+    except Exception as e:
+        return f"Error processing the report: {str(e)}"
+
 
 def ai_summarize(report_content):
     # Patient summary prompt
@@ -52,19 +66,11 @@ def ai_summarize(report_content):
         f"{report_content}"
     )
 
-    # Use a model available for free trial (usually 'chat-bison-001')
-    model = genai.GenerativeModel('chat-bison-001')
-
-    try:
-        patient_response = model.generate_content(prompt_patient)
-        doctor_response = model.generate_content(prompt_doctor)
-
-        patient_summary = patient_response.text
-        doctor_summary = doctor_response.text
-    except Exception as e:
-        patient_summary = doctor_summary = f"Error processing the report: {str(e)}"
+    patient_summary = summarize_with_gemini(prompt_patient)
+    doctor_summary = summarize_with_gemini(prompt_doctor)
 
     return patient_summary, doctor_summary
+
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -79,6 +85,7 @@ def upload_file():
         public_url = upload_to_gcs(file, unique_filename)
         return jsonify({'fileUrl': public_url})
     return jsonify({'error': 'Invalid file type'}), 400
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -113,6 +120,7 @@ def webhook():
             ]
         }
     })
+
 
 if __name__ == '__main__':
     app.run(debug=True)
