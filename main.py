@@ -52,13 +52,17 @@ def ai_summarize(report_content):
         f"{report_content}"
     )
 
+    # Use a model available for free trial (usually 'chat-bison-001')
     model = genai.GenerativeModel('chat-bison-001')
 
-    patient_response = model.generate_content(prompt_patient)
-    doctor_response = model.generate_content(prompt_doctor)
+    try:
+        patient_response = model.generate_content(prompt_patient)
+        doctor_response = model.generate_content(prompt_doctor)
 
-    patient_summary = patient_response.text
-    doctor_summary = doctor_response.text
+        patient_summary = patient_response.text
+        doctor_summary = doctor_response.text
+    except Exception as e:
+        patient_summary = doctor_summary = f"Error processing the report: {str(e)}"
 
     return patient_summary, doctor_summary
 
