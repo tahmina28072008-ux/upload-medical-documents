@@ -14,7 +14,7 @@ app = Flask(__name__)
 CORS(app, origins=["https://healthcare-patient-portal.web.app"])
 
 BUCKET_NAME = "upload-documents-report"
-ALLOWED_EXTENSIONS = {"pdf", "txt", "doc", "docx", "png", "jpg", "jpeg"}
+ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx', 'png', 'jpg', 'jpeg'}
 
 # Configure Gemini API key from environment variable
 GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -25,7 +25,7 @@ else:
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def upload_to_gcs(file_obj, filename):
@@ -42,25 +42,14 @@ def extract_text_from_pdf_bytes(pdf_bytes):
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
 
-def summarize_with_gemini(prompt: str, model_names=None):
-    """Helper to summarize text with Gemini, with model fallback."""
-    if model_names is None:
-        model_names = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
-
-    last_error = None
-    for model_name in model_names:
-        try:
-            print(f"Trying Gemini model: {model_name}")
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content([prompt])
-            return response.candidates[0].content.parts[0].text.strip()
-        except Exception as e:
-            error_message = str(e)
-            print(f"Error with model {model_name}: {error_message}")
-            last_error = error_message
-            continue
-
-    return f"Could not summarize with any model. Last error: {last_error}"
+def summarize_with_gemini(prompt: str, model_name="gemini-1.5-flash"):
+    """Helper to summarize text with Gemini."""
+    try:
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content([prompt])
+        return response.candidates[0].content.parts[0].text.strip()
+    except Exception as e:
+        return f"Error processing the report: {str(e)}"
 
 
 def ai_summarize(report_content):
@@ -83,52 +72,36 @@ def ai_summarize(report_content):
     return patient_summary, doctor_summary
 
 
-@app.route("/upload", methods=["POST"])
+@app.route('/upload', methods=['POST'])
 def upload_file():
-    if "file" not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"error": "No selected file"}), 400
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
         unique_filename = f"{int(round(os.times()[4]*1000))}_{filename}"
         public_url = upload_to_gcs(file, unique_filename)
-        return jsonify({"fileUrl": public_url})
-    return jsonify({"error": "Invalid file type"}), 400
+        return jsonify({'fileUrl': public_url})
+    return jsonify({'error': 'Invalid file type'}), 400
 
 
-@app.route("/webhook", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    try:
-        body = request.json
-        if not body:
-            return jsonify({
-                "fulfillment_response": {
-                    "messages": [{"text": {"text": ["Invalid request body. No JSON found."]}}]
-                }
-            })
-    except Exception as e:
-        return jsonify({
-            "fulfillment_response": {
-                "messages": [{"text": {"text": [f"Error parsing JSON: {str(e)}"]}}]
-            }
-        })
-
-    file_url = body.get("sessionInfo", {}).get("parameters", {}).get("file_url")
-
+    body = request.json
+    file_url = body['sessionInfo']['parameters'].get('file_url')
     patient_summary = "No file URL provided."
     doctor_summary = "No file URL provided."
-
     if file_url:
         try:
             response = requests.get(file_url)
             if response.status_code == 200:
-                if file_url.lower().endswith(".pdf"):
+                # Detect file type from URL extension
+                if file_url.lower().endswith('.pdf'):
                     report_content = extract_text_from_pdf_bytes(response.content)
                 else:
-                    report_content = response.content.decode("utf-8", errors="ignore")
-
+                    report_content = response.content.decode('utf-8', errors='ignore')
                 if not report_content.strip():
                     patient_summary = doctor_summary = "The report file appears empty or could not be read."
                 else:
@@ -139,7 +112,6 @@ def webhook():
                 )
         except Exception as e:
             patient_summary = doctor_summary = f"Error processing the report: {str(e)}"
-
     return jsonify({
         "fulfillment_response": {
             "messages": [
@@ -149,5 +121,5 @@ def webhook():
     })
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)
