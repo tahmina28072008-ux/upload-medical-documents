@@ -23,26 +23,21 @@ if GENAI_API_KEY:
 else:
     raise Exception("GEMINI_API_KEY environment variable not set.")
 
-
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
 
 def upload_to_gcs(file_obj, filename):
     client = storage.Client()
     bucket = client.bucket(BUCKET_NAME)
     blob = bucket.blob(filename)
     blob.upload_from_file(file_obj, content_type=file_obj.content_type)
-    # Do NOT call blob.make_public(); use bucket-level IAM for access.
     return f"https://storage.googleapis.com/{BUCKET_NAME}/{filename}"
-
 
 def extract_text_from_pdf_bytes(pdf_bytes):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
-
-def summarize_with_gemini(prompt: str, model_name="gemini-2.5-flash"):
+def summarize_with_gemini(prompt: str, model_name="models/gemini-2.5-flash"):
     """Helper to summarize text with Gemini."""
     try:
         model = genai.GenerativeModel(model_name)
@@ -51,15 +46,12 @@ def summarize_with_gemini(prompt: str, model_name="gemini-2.5-flash"):
     except Exception as e:
         return f"Error processing the report: {str(e)}"
 
-
 def ai_summarize(report_content):
-    # Patient summary prompt
     prompt_patient = (
         "Summarize the following medical report for a patient in simple, natural language. "
         "Focus on what the patient needs to know, avoid medical jargon, and explain clearly:\n\n"
         f"{report_content}"
     )
-    # Doctor summary prompt
     prompt_doctor = (
         "Summarize the following medical report for a doctor, highlighting key findings, clinical concerns, "
         "and what to focus on before the patient's visit:\n\n"
@@ -70,7 +62,6 @@ def ai_summarize(report_content):
     doctor_summary = summarize_with_gemini(prompt_doctor)
 
     return patient_summary, doctor_summary
-
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -86,7 +77,6 @@ def upload_file():
         return jsonify({'fileUrl': public_url})
     return jsonify({'error': 'Invalid file type'}), 400
 
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     body = request.json
@@ -97,7 +87,6 @@ def webhook():
         try:
             response = requests.get(file_url)
             if response.status_code == 200:
-                # Detect file type from URL extension
                 if file_url.lower().endswith('.pdf'):
                     report_content = extract_text_from_pdf_bytes(response.content)
                 else:
@@ -119,7 +108,6 @@ def webhook():
             ]
         }
     })
-
 
 if __name__ == '__main__':
     app.run(debug=True)
