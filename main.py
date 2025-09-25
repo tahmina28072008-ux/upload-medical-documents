@@ -115,8 +115,7 @@ def webhook():
     return jsonify({
         "fulfillment_response": {
             "messages": [
-                {"text": {"text": [f"Patient summary: {patient_summary}"]}},
-                {"text": {"text": [f"Doctor summary: {doctor_summary}"]}}
+                {"text": {"text": [f"Patient summary: {patient_summary}\n\nDoctor summary: {doctor_summary}"]}}
             ]
         }
     })
