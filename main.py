@@ -23,31 +23,10 @@ if GENAI_API_KEY:
 else:
     raise Exception("GEMINI_API_KEY environment variable not set.")
 
-# List available models once at startup for debugging
-AVAILABLE_MODELS = [m.name for m in genai.list_models()]
-print("Available Gemini models for this API key:", AVAILABLE_MODELS)
-
-# Choose the best available model for generateContent
-CANDIDATE_MODELS = [
-    'models/gemini-2.5-flash', 
-    'models/gemini-2.5-flash-preview-05-20',
-    'models/gemini-1.5-flash',
-    'models/gemini-1.5-pro'
-]
-
-DEFAULT_MODEL = None
-for candidate in CANDIDATE_MODELS:
-    if candidate in AVAILABLE_MODELS:
-        DEFAULT_MODEL = candidate
-        break
-if DEFAULT_MODEL is None:
-    raise Exception(
-        f"No supported Gemini model found for generateContent. Check your API key and project setup.\n"
-        f"Available models: {AVAILABLE_MODELS}"
-    )
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 def upload_to_gcs(file_obj, filename):
     client = storage.Client()
@@ -57,11 +36,13 @@ def upload_to_gcs(file_obj, filename):
     # Do NOT call blob.make_public(); use bucket-level IAM for access.
     return f"https://storage.googleapis.com/{BUCKET_NAME}/{filename}"
 
+
 def extract_text_from_pdf_bytes(pdf_bytes):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
-def summarize_with_gemini(prompt: str, model_name=DEFAULT_MODEL):
+
+def summarize_with_gemini(prompt: str, model_name="gemini-2.5-flash"):
     """Helper to summarize text with Gemini."""
     try:
         model = genai.GenerativeModel(model_name)
@@ -69,6 +50,7 @@ def summarize_with_gemini(prompt: str, model_name=DEFAULT_MODEL):
         return response.candidates[0].content.parts[0].text.strip()
     except Exception as e:
         return f"Error processing the report: {str(e)}"
+
 
 def ai_summarize(report_content):
     # Patient summary prompt
@@ -89,6 +71,7 @@ def ai_summarize(report_content):
 
     return patient_summary, doctor_summary
 
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -102,6 +85,7 @@ def upload_file():
         public_url = upload_to_gcs(file, unique_filename)
         return jsonify({'fileUrl': public_url})
     return jsonify({'error': 'Invalid file type'}), 400
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -135,6 +119,7 @@ def webhook():
             ]
         }
     })
+
 
 if __name__ == '__main__':
     app.run(debug=True)
