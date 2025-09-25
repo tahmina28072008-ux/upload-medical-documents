@@ -28,14 +28,23 @@ AVAILABLE_MODELS = [m.name for m in genai.list_models()]
 print("Available Gemini models for this API key:", AVAILABLE_MODELS)
 
 # Choose the best available model for generateContent
-# Example: 'gemini-pro', 'gemini-1.5-pro', 'gemini-1.5-flash', or 'gemini-2.5-flash-preview-05-20'
+CANDIDATE_MODELS = [
+    'models/gemini-2.5-flash', 
+    'models/gemini-2.5-flash-preview-05-20',
+    'models/gemini-1.5-flash',
+    'models/gemini-1.5-pro'
+]
+
 DEFAULT_MODEL = None
-for candidate in ['gemini-2.5-flash-preview-05-20', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']:
+for candidate in CANDIDATE_MODELS:
     if candidate in AVAILABLE_MODELS:
         DEFAULT_MODEL = candidate
         break
 if DEFAULT_MODEL is None:
-    raise Exception("No supported Gemini model found for generateContent. Check your API key and project setup.")
+    raise Exception(
+        f"No supported Gemini model found for generateContent. Check your API key and project setup.\n"
+        f"Available models: {AVAILABLE_MODELS}"
+    )
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
