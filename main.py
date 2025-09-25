@@ -7,7 +7,6 @@ from google.cloud import storage
 import google.generativeai as genai
 import requests
 import pdfplumber
-import json
 
 app = Flask(__name__)
 
@@ -22,12 +21,24 @@ GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GENAI_API_KEY:
     genai.configure(api_key=GENAI_API_KEY)
 else:
-    raise Exception("GENINI_API_KEY environment variable not set.")
+    raise Exception("GEMINI_API_KEY environment variable not set.")
 
+# List available models once at startup for debugging
+AVAILABLE_MODELS = [m.name for m in genai.list_models()]
+print("Available Gemini models for this API key:", AVAILABLE_MODELS)
+
+# Choose the best available model for generateContent
+# Example: 'gemini-pro', 'gemini-1.5-pro', 'gemini-1.5-flash', or 'gemini-2.5-flash-preview-05-20'
+DEFAULT_MODEL = None
+for candidate in ['gemini-2.5-flash-preview-05-20', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']:
+    if candidate in AVAILABLE_MODELS:
+        DEFAULT_MODEL = candidate
+        break
+if DEFAULT_MODEL is None:
+    raise Exception("No supported Gemini model found for generateContent. Check your API key and project setup.")
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
 
 def upload_to_gcs(file_obj, filename):
     client = storage.Client()
@@ -37,32 +48,18 @@ def upload_to_gcs(file_obj, filename):
     # Do NOT call blob.make_public(); use bucket-level IAM for access.
     return f"https://storage.googleapis.com/{BUCKET_NAME}/{filename}"
 
-
 def extract_text_from_pdf_bytes(pdf_bytes):
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
-
-def get_gemini_summary(prompt: str):
-    """
-    Helper to summarize text with Gemini, using the preferred model.
-    """
-    model_name = "gemini-2.5-flash-preview-05-20"
+def summarize_with_gemini(prompt: str, model_name=DEFAULT_MODEL):
+    """Helper to summarize text with Gemini."""
     try:
-        print(f"Attempting to use Gemini model: {model_name}")
         model = genai.GenerativeModel(model_name)
         response = model.generate_content([prompt])
         return response.candidates[0].content.parts[0].text.strip()
-    except genai.types.generation_types.StopCandidateException as e:
-        print(f"API call to {model_name} returned empty content: {e}")
-        return "Unable to generate a summary. The model returned no content."
     except Exception as e:
-        error_message = str(e)
-        print(f"Error with model {model_name}: {error_message}")
-        if "404 models/" in error_message:
-            return f"Error: The model '{model_name}' is not available in your region. Please check your project's regional settings and model availability."
-        return f"Error processing the report with {model_name}: {error_message}"
-
+        return f"Error processing the report: {str(e)}"
 
 def ai_summarize(report_content):
     # Patient summary prompt
@@ -78,11 +75,10 @@ def ai_summarize(report_content):
         f"{report_content}"
     )
 
-    patient_summary = get_gemini_summary(prompt_patient)
-    doctor_summary = get_gemini_summary(prompt_doctor)
+    patient_summary = summarize_with_gemini(prompt_patient)
+    doctor_summary = summarize_with_gemini(prompt_doctor)
 
     return patient_summary, doctor_summary
-
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -98,30 +94,21 @@ def upload_file():
         return jsonify({'fileUrl': public_url})
     return jsonify({'error': 'Invalid file type'}), 400
 
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    try:
-        body = request.json
-        if not body:
-            return jsonify({"fulfillment_response": {"messages": [{"text": {"text": ["Invalid request body. No JSON found."]}}]}})
-    except Exception as e:
-        return jsonify({"fulfillment_response": {"messages": [{"text": {"text": [f"Error parsing JSON: {str(e)}"]}}]}})
-
-    file_url = body.get('sessionInfo', {}).get('parameters', {}).get('file_url')
-    
+    body = request.json
+    file_url = body['sessionInfo']['parameters'].get('file_url')
     patient_summary = "No file URL provided."
     doctor_summary = "No file URL provided."
-
     if file_url:
         try:
             response = requests.get(file_url)
             if response.status_code == 200:
+                # Detect file type from URL extension
                 if file_url.lower().endswith('.pdf'):
                     report_content = extract_text_from_pdf_bytes(response.content)
                 else:
                     report_content = response.content.decode('utf-8', errors='ignore')
-                
                 if not report_content.strip():
                     patient_summary = doctor_summary = "The report file appears empty or could not be read."
                 else:
@@ -132,7 +119,6 @@ def webhook():
                 )
         except Exception as e:
             patient_summary = doctor_summary = f"Error processing the report: {str(e)}"
-    
     return jsonify({
         "fulfillment_response": {
             "messages": [
@@ -140,7 +126,6 @@ def webhook():
             ]
         }
     })
-
 
 if __name__ == '__main__':
     app.run(debug=True)
