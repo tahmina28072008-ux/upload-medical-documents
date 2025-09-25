@@ -10,20 +10,17 @@ import pdfplumber
 
 app = Flask(__name__)
 
-# Allow requests from your frontend domain
 CORS(app, origins=["https://healthcare-patient-portal.web.app"])
 
 BUCKET_NAME = "upload-documents-report"
 ALLOWED_EXTENSIONS = {'pdf', 'txt', 'doc', 'docx', 'png', 'jpg', 'jpeg'}
 
-# Configure Gemini API key from environment variable
 GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GENAI_API_KEY:
     genai.configure(api_key=GENAI_API_KEY)
 else:
     raise Exception("GEMINI_API_KEY environment variable not set.")
 
-# Select best available Gemini model
 CANDIDATE_MODELS = [
     'models/gemini-2.5-flash',
     'models/gemini-2.5-flash-preview-05-20',
@@ -47,17 +44,16 @@ def upload_to_gcs(file_obj, filename):
 def extract_text_from_pdf_bytes(pdf_bytes):
     print("Starting PDF extraction...")
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        # Extract only first 5 pages to avoid memory issues
         text = "\n".join([page.extract_text() for page in pdf.pages[:5] if page.extract_text()])
     print(f"Extracted text from PDF ({len(text)} chars)")
     return text
 
 def summarize_with_gemini(prompt: str, model_name=DEFAULT_MODEL):
-    """Helper to summarize text with Gemini."""
     print("Sending prompt to Gemini:", prompt[:200])
     try:
         model = genai.GenerativeModel(model_name)
         response = model.generate_content([prompt])
+        print("Gemini raw response:", response)
         if hasattr(response, "candidates") and response.candidates:
             summary = response.candidates[0].content.parts[0].text.strip()
         else:
@@ -69,6 +65,8 @@ def summarize_with_gemini(prompt: str, model_name=DEFAULT_MODEL):
         return f"Error processing the report: {str(e)}"
 
 def ai_summarize(report_content):
+    # Limit content for Gemini to avoid crashes/timeouts
+    report_content = report_content[:1000]
     prompt_patient = (
         "Summarize the following medical report for a patient in simple, natural language. "
         "Focus on what the patient needs to know, avoid medical jargon, and explain clearly:\n\n"
