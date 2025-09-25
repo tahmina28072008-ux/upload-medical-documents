@@ -45,28 +45,23 @@ def extract_text_from_pdf_bytes(pdf_bytes):
 
 def get_gemini_summary(prompt: str):
     """
-    Helper to summarize text with Gemini, with a fallback mechanism.
-    It tries gemini-1.0-pro first, and then falls back if it fails.
+    Helper to summarize text with Gemini, using the preferred model.
     """
-    model_names = ["gemini-1.0-pro", "gemini-2.5-flash-preview-05-20"]
-    for model_name in model_names:
-        try:
-            print(f"Attempting to use Gemini model: {model_name}")
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content([prompt])
-            return response.candidates[0].content.parts[0].text.strip()
-        except genai.types.generation_types.StopCandidateException as e:
-            print(f"API call to {model_name} returned empty content: {e}")
-            return "Unable to generate a summary. The model returned no content."
-        except Exception as e:
-            error_message = str(e)
-            print(f"Error with model {model_name}: {error_message}")
-            if "404 models/" in error_message:
-                print(f"Model {model_name} not found. Falling back to the next model...")
-                continue
-            return f"Error processing the report with {model_name}: {error_message}"
-    
-    return "Failed to process the report. No available models could be used."
+    model_name = "gemini-2.5-flash-preview-05-20"
+    try:
+        print(f"Attempting to use Gemini model: {model_name}")
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content([prompt])
+        return response.candidates[0].content.parts[0].text.strip()
+    except genai.types.generation_types.StopCandidateException as e:
+        print(f"API call to {model_name} returned empty content: {e}")
+        return "Unable to generate a summary. The model returned no content."
+    except Exception as e:
+        error_message = str(e)
+        print(f"Error with model {model_name}: {error_message}")
+        if "404 models/" in error_message:
+            return f"Error: The model '{model_name}' is not available in your region. Please check your project's regional settings and model availability."
+        return f"Error processing the report with {model_name}: {error_message}"
 
 
 def ai_summarize(report_content):
