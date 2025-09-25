@@ -7,6 +7,7 @@ from google.cloud import storage
 import google.generativeai as genai
 import requests
 import pdfplumber
+import json # Added to handle JSON parsing
 
 app = Flask(__name__)
 
@@ -42,14 +43,28 @@ def extract_text_from_pdf_bytes(pdf_bytes):
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
 
-def summarize_with_gemini(prompt: str, model_name="gemini-1.0-pro"):
-    """Helper to summarize text with Gemini."""
-    try:
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content([prompt])
-        return response.candidates[0].content.parts[0].text.strip()
-    except Exception as e:
-        return f"Error processing the report: {str(e)}"
+def summarize_with_gemini(prompt: str, model_names=["gemini-2.5-flash-preview-05-20", "gemini-1.0-pro"]):
+    """Helper to summarize text with Gemini, with model fallback."""
+    for model_name in model_names:
+        try:
+            print(f"Attempting to use Gemini model: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content([prompt])
+            return response.candidates[0].content.parts[0].text.strip()
+        except genai.types.generation_types.StopCandidateException as e:
+            # Handle cases where the API call returns an empty candidate
+            print(f"API call to {model_name} returned empty content: {e}")
+            return "Unable to generate a summary. The model returned no content."
+        except Exception as e:
+            error_message = str(e)
+            print(f"Error with model {model_name}: {error_message}")
+            # Check for a 404 error
+            if "404 models/" in error_message:
+                print(f"Model {model_name} not found. Falling back to the next model...")
+                continue # Try the next model in the list
+            return f"Error processing the report with {model_name}: {error_message}"
+    
+    return "Failed to process the report. No available models could be used."
 
 
 def ai_summarize(report_content):
@@ -89,19 +104,29 @@ def upload_file():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    body = request.json
-    file_url = body['sessionInfo']['parameters'].get('file_url')
+    # Use try-except to safely get the JSON body
+    try:
+        body = request.json
+        if not body:
+            return jsonify({"fulfillment_response": {"messages": [{"text": {"text": ["Invalid request body. No JSON found."]}}]}})
+    except Exception as e:
+        return jsonify({"fulfillment_response": {"messages": [{"text": {"text": [f"Error parsing JSON: {str(e)}"]}}]}})
+
+    # Extract file_url safely with .get()
+    file_url = body.get('sessionInfo', {}).get('parameters', {}).get('file_url')
+    
     patient_summary = "No file URL provided."
     doctor_summary = "No file URL provided."
+
     if file_url:
         try:
             response = requests.get(file_url)
             if response.status_code == 200:
-                # Detect file type from URL extension
                 if file_url.lower().endswith('.pdf'):
                     report_content = extract_text_from_pdf_bytes(response.content)
                 else:
                     report_content = response.content.decode('utf-8', errors='ignore')
+                
                 if not report_content.strip():
                     patient_summary = doctor_summary = "The report file appears empty or could not be read."
                 else:
@@ -112,6 +137,7 @@ def webhook():
                 )
         except Exception as e:
             patient_summary = doctor_summary = f"Error processing the report: {str(e)}"
+    
     return jsonify({
         "fulfillment_response": {
             "messages": [
