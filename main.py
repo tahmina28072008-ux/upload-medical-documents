@@ -43,7 +43,7 @@ def extract_text_from_pdf_bytes(pdf_bytes):
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
 
-def summarize_with_gemini(prompt: str, model_names=["gemini-1.0-pro"]):
+def summarize_with_gemini(prompt: str, model_names="gemini-2.5-flash"):
     """Helper to summarize text with Gemini, with model fallback."""
     for model_name in model_names:
         try:
