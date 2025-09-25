@@ -1,7 +1,8 @@
 Flask
 flask-cors
-requests
-Werkzeug
 google-cloud-storage
+Werkzeug
+requests
 google-generativeai
+pdfplumber
 
