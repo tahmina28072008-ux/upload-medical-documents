@@ -52,7 +52,7 @@ def ai_summarize(report_content):
         f"{report_content}"
     )
 
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('chat-bison-001')
 
     patient_response = model.generate_content(prompt_patient)
     doctor_response = model.generate_content(prompt_doctor)
