@@ -22,7 +22,7 @@ GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GENAI_API_KEY:
     genai.configure(api_key=GENAI_API_KEY)
 else:
-    raise Exception("GEMINI_API_KEY environment variable not set.")
+    raise Exception("GENINI_API_KEY environment variable not set.")
 
 
 def allowed_file(filename):
@@ -43,7 +43,7 @@ def extract_text_from_pdf_bytes(pdf_bytes):
         return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
 
 
-def summarize_with_gemini(prompt: str, model_names=["gemini-2.5-flash-preview-05-20", "gemini-1.0-pro"]):
+def summarize_with_gemini(prompt: str, model_names=["gemini-1.0-pro"]):
     """Helper to summarize text with Gemini, with model fallback."""
     for model_name in model_names:
         try:
