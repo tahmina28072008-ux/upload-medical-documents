@@ -104,40 +104,73 @@ def webhook():
     print("Webhook route hit")
     body = request.json
     print(f"Webhook request body: {body}")
-    file_url = body['sessionInfo']['parameters'].get('file_url')
+    params = body.get('sessionInfo', {}).get('parameters', {})
+    file_url = params.get('file_url')
+
     patient_summary = "No file URL provided."
     doctor_summary = "No file URL provided."
+
     if file_url:
         try:
             print("Fetching file from:", file_url)
             response = requests.get(file_url, timeout=15)
             print("Report fetch status:", response.status_code)
+
             if response.status_code == 200:
                 if file_url.lower().endswith('.pdf'):
                     report_content = extract_text_from_pdf_bytes(response.content)
                 else:
                     report_content = response.content.decode('utf-8', errors='ignore')
+
                 print(f"Extracted report_content: {repr(report_content[:200])}")
+
                 if not report_content.strip():
                     patient_summary = doctor_summary = "The report file appears empty or could not be read."
                 else:
                     patient_summary, doctor_summary = ai_summarize(report_content)
-                print("Patient summary:", patient_summary[:200])
-                print("Doctor summary:", doctor_summary[:200])
+
+                print("✅ Patient summary generated")
+                print(patient_summary[:300])
+                print("✅ Doctor summary generated")
+                print(doctor_summary[:300])
+
             else:
                 patient_summary = doctor_summary = (
                     f"Could not retrieve the report file (HTTP {response.status_code}). Please try uploading again."
                 )
+
         except Exception as e:
             print("Error processing file:", str(e))
             patient_summary = doctor_summary = f"Error processing the report: {str(e)}"
+
+    # Debug logs for what we send back to Dialogflow
+    print("Returning to Dialogflow with session parameters:")
+    print({
+        "patient_summary": patient_summary[:200],
+        "doctor_summary": doctor_summary[:200]
+    })
+
     return jsonify({
+        "sessionInfo": {
+            "parameters": {
+                "patient_summary": patient_summary,
+                "doctor_summary": doctor_summary
+            }
+        },
         "fulfillment_response": {
             "messages": [
-                {"text": {"text": [f"Patient summary: {patient_summary}\n\nDoctor summary: {doctor_summary}"]}}
+                {
+                    "text": {
+                        "text": [
+                            f"Here’s what I found in your report:\n\n"
+                            f"🧾 Patient summary:\n{patient_summary}\n\n"
+                            f"👨‍⚕️ Doctor summary:\n{doctor_summary}"
+                        ]
+                    }
+                }
             ]
         }
     })
-
+    
 if __name__ == '__main__':
     app.run(debug=True)
