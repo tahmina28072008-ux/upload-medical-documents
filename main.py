@@ -31,8 +31,10 @@ AVAILABLE_MODELS = [m.name for m in genai.list_models()]
 DEFAULT_MODEL = next((m for m in CANDIDATE_MODELS if m in AVAILABLE_MODELS), "models/gemini-2.5-flash")
 print(f"Using Gemini model: {DEFAULT_MODEL}")
 
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 def upload_to_gcs(file_obj, filename):
     client = storage.Client()
@@ -41,12 +43,14 @@ def upload_to_gcs(file_obj, filename):
     blob.upload_from_file(file_obj, content_type=file_obj.content_type)
     return f"https://storage.googleapis.com/{BUCKET_NAME}/{filename}"
 
+
 def extract_text_from_pdf_bytes(pdf_bytes):
     print("Starting PDF extraction...")
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         text = "\n".join([page.extract_text() for page in pdf.pages[:5] if page.extract_text()])
     print(f"Extracted text from PDF ({len(text)} chars)")
     return text
+
 
 def summarize_with_gemini(prompt: str, model_name=DEFAULT_MODEL):
     print("Sending prompt to Gemini:", prompt[:200])
@@ -63,6 +67,7 @@ def summarize_with_gemini(prompt: str, model_name=DEFAULT_MODEL):
     except Exception as e:
         print("Gemini error:", str(e))
         return f"Error processing the report: {str(e)}"
+
 
 def ai_summarize(report_content):
     # Limit content for Gemini to avoid crashes/timeouts
@@ -83,6 +88,7 @@ def ai_summarize(report_content):
 
     return patient_summary, doctor_summary
 
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     print("Upload route hit")
@@ -98,6 +104,7 @@ def upload_file():
         print(f"Returning fileUrl: {public_url}")
         return jsonify({'fileUrl': public_url})
     return jsonify({'error': 'Invalid file type'}), 400
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -164,13 +171,30 @@ def webhook():
                         "text": [
                             f"Here’s what I found in your report:\n\n"
                             f"🧾 Patient summary:\n{patient_summary}\n\n"
-                            f"👨‍⚕️ Doctor summary:\n{doctor_summary}"
+                            f"👨‍⚕️ Doctor summary:\n{doctor_summary}\n\n"
+                            f"Do you want to confirm this booking?"
+                        ]
+                    }
+                },
+                {
+                    "payload": {
+                        "richContent": [
+                            [
+                                {
+                                    "type": "chips",
+                                    "options": [
+                                        {"text": "✅ Yes, confirm booking"},
+                                        {"text": "❌ No, cancel"}
+                                    ]
+                                }
+                            ]
                         ]
                     }
                 }
             ]
         }
     })
-    
+
+
 if __name__ == '__main__':
     app.run(debug=True)
