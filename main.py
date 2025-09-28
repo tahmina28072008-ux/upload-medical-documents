@@ -157,6 +157,21 @@ def webhook():
         "doctor_summary": doctor_summary[:200]
     })
 
+    # --- The payload for Yes/No chips ---
+    chip_payload = {
+        "richContent": [
+            [
+                {
+                    "type": "chips",
+                    "options": [
+                        {"text": "✅ Yes, confirm booking"},
+                        {"text": "❌ No, cancel"}
+                    ]
+                }
+            ]
+        ]
+    }
+
     return jsonify({
         "sessionInfo": {
             "parameters": {
@@ -177,19 +192,7 @@ def webhook():
                     }
                 },
                 {
-                    "payload": {
-                        "richContent": [
-                            [
-                                {
-                                    "type": "chips",
-                                    "options": [
-                                        {"text": "✅ Yes, confirm booking"},
-                                        {"text": "❌ No, cancel"}
-                                    ]
-                                }
-                            ]
-                        ]
-                    }
+                    "payload": chip_payload
                 }
             ]
         }
